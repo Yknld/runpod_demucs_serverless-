@@ -1,83 +1,107 @@
 import runpod
 import json
 import base64
-import io
 import tempfile
 import subprocess
 import time
-import os
 from pathlib import Path
 
-def process_audio(job):
+def handler(job):
     """
-    Simplified Demucs processing for RunPod Serverless
+    Simple working RunPod handler for Demucs
     """
     try:
-        # Get input data
         input_data = job.get("input", {})
+        
+        # Test mode
+        if input_data.get("test"):
+            return {
+                "success": True,
+                "message": f"Handler working! Test: {input_data['test']}",
+                "status": "ready"
+            }
+        
+        # Audio processing mode
         audio_base64 = input_data.get("audio_data")
-        filename = input_data.get("filename", "audio.wav")
         
         if not audio_base64:
-            return {"error": "No audio data provided"}
+            return {
+                "error": "No audio data provided",
+                "help": "Send base64 encoded audio in 'audio_data' field"
+            }
         
-        print(f"🎵 Processing {filename} with Demucs...")
+        print(f"🎵 Processing audio with Demucs...")
         start_time = time.time()
         
-        # Decode audio data
+        # Decode audio
         audio_bytes = base64.b64decode(audio_base64)
         
-        # Create temporary files
+        # Create temp directory
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            input_file = temp_path / filename
+            input_file = temp_path / "input.wav"
             
-            # Save input audio
+            # Save input
             with open(input_file, 'wb') as f:
                 f.write(audio_bytes)
             
-            print(f"🚀 Starting Demucs separation...")
+            print(f"📁 Saved input: {input_file} ({len(audio_bytes)} bytes)")
             
-            # Run Demucs separation (simplified)
+            # Run Demucs
             cmd = [
                 'python', '-m', 'demucs.separate',
                 '--two-stems=vocals',
                 '--mp3',
                 '--mp3-bitrate', '192',
-                '--out', str(temp_path),
                 str(input_file)
             ]
             
+            print(f"🚀 Running: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             
             if result.returncode != 0:
-                return {"error": f"Demucs failed: {result.stderr}"}
+                return {
+                    "error": f"Demucs failed: {result.stderr}",
+                    "stdout": result.stdout[:500],
+                    "command": ' '.join(cmd)
+                }
             
-            # Find output files
-            audio_stem = input_file.stem
-            demucs_output = temp_path / "htdemucs" / audio_stem
-            vocals_file = demucs_output / "vocals.mp3"
+            # Find vocals file
+            separated_dir = temp_path / "separated" / "htdemucs" / "input"
+            vocals_file = separated_dir / "vocals.mp3"
             
             if not vocals_file.exists():
-                return {"error": "Vocals file not created"}
+                # Try alternative path
+                vocals_file = separated_dir / "vocals.wav"
+                
+            if not vocals_file.exists():
+                return {
+                    "error": "Vocals file not found",
+                    "stdout": result.stdout,
+                    "directory_contents": str(list(temp_path.rglob("*")))
+                }
             
-            # Read and encode output
+            # Read and encode vocals
             with open(vocals_file, 'rb') as f:
-                output_data = f.read()
-                output_base64 = base64.b64encode(output_data).decode()
+                vocals_bytes = f.read()
             
+            vocals_base64 = base64.b64encode(vocals_bytes).decode()
             processing_time = time.time() - start_time
             
             return {
                 "success": True,
-                "vocals_data": output_base64,
+                "vocals_data": vocals_base64,
                 "processing_time": processing_time,
-                "filename": f"{audio_stem}_vocals.mp3",
-                "device_used": "gpu" if os.getenv('CUDA_VISIBLE_DEVICES') else "cpu"
+                "input_size": len(audio_bytes),
+                "output_size": len(vocals_bytes),
+                "format": vocals_file.suffix
             }
             
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "type": type(e).__name__
+        }
 
-# RunPod serverless handler
-runpod.serverless.start({"handler": process_audio})
+# Start RunPod handler
+runpod.serverless.start({"handler": handler})
