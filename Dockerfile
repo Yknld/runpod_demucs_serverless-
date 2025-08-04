@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
-COPY requirements_minimal.txt requirements.txt
+COPY requirements_full.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy handler
-COPY handler.py .
+COPY handler_demucs.py .
 
 # Set the handler
-CMD python -u handler.py
+CMD python -u handler_demucs.py
